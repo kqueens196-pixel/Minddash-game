@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>MindDash 1000</title>
+<style>
+  * {
+    box-sizing: border-box;
+    user-select: none;
+    -webkit-user-select: none;
+    margin: 0;
+    padding: 0;
+    touch-action: manipulation;
+  }
+  body {
+    background: #08090d;
+    color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .hud {
+    display: flex;
+    justify-content: space-between;
+    width: 88%;
+    max-width: 360px;
+    margin-bottom: 12px;
+    font-weight: 800;
+    letter-spacing: 1.5px;
+    font-size: 0.95rem;
+  }
+  #levelLabel { color: #00f2fe; }
+  #scoreLabel { color: #fe0979; }
+  .bar-container {
+    width: 88%;
+    max-width: 360px;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    margin-bottom: 24px;
+    overflow: hidden;
+  }
+  #timerBar {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, #00f2fe, #fe0979);
+    box-shadow: 0 0 10px #00f2fe;
+    transition: width 0.05s linear;
+  }
+  .target-box {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 18px;
+    padding: 24px 10px;
+    text-align: center;
+    width: 88%;
+    max-width: 360px;
+    margin-bottom: 28px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(10px);
+  }
+  .instruction {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: #718096;
+    letter-spacing: 2px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+  #promptText {
+    font-size: 2.4rem;
+    font-weight: 900;
+    letter-spacing: 2px;
+    text-shadow: 0 0 20px currentColor;
+    transition: transform 0.1s ease;
+  }
+  .grid {
+    display: grid;
+    gap: 14px;
+    width: 88%;
+    max-width: 360px;
+  }
+  .grid-2x2 { grid-template-columns: repeat(2, 1fr); }
+  .grid-3x3 { grid-template-columns: repeat(3, 1fr); }
+  .btn {
+    height: 85px;
+    border: none;
+    border-radius: 16px;
+    font-size: 1.1rem;
+    font-weight: 900;
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+    outline: none;
+    transition: transform 0.08s, filter 0.08s;
+  }
+  .btn:active {
+    transform: scale(0.92);
+    filter: brightness(1.2);
+  }
+</style>
+</head>
+<body>
+
+<div class="hud">
+  <span id="levelLabel">LVL 1 / 1000</span>
+  <span id="scoreLabel">STREAK: 0</span>
+</div>
+
+<div class="bar-container">
+  <div id="timerBar"></div>
+</div>
+
+<div class="target-box">
+  <div class="instruction" id="ruleInstruction">MATCH THE COLOR</div>
+  <div id="promptText">WAIT...</div>
+</div>
+
+<div class="grid grid-2x2" id="gridContainer"></div>
+
+<script>
+// Web Audio API Engine (Runs 100% Offline without external audio files)
+const AudioContext = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+
+function playSound(type) {
+  if (!audioCtx) audioCtx = new AudioContext();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  const now = audioCtx.currentTime;
+  if (type === 'success') {
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(520, now);
+    osc.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+    gain.gain.setValueAtTime(0.15, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.12);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  } else {
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(140, now);
+    osc.frequency.linearRampToValueAtTime(60, now + 0.25);
+    gain.gain.setValueAtTime(0.2, now);
+    gain.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+    osc.start(now);
+    osc.stop(now + 0.25);
+  }
+}
+
+const COLOR_PALETTE = [
+  { name: 'CYAN', hex: '#00f2fe' },
+  { name: 'PINK', hex: '#fe0979' },
+  { name: 'AMBER', hex: '#ffb300' },
+  { name: 'LIME', hex: '#00e676' },
+  { name: 'PURPLE', hex: '#b5179e' },
+  { name: 'ORANGE', hex: '#ff5722' }
+];
+
+let currentLevel = parseInt(localStorage.getItem('minddash_level')) || 1;
+let streak = 0;
+let timer = null;
+let timeLeft = 100;
+let correctTarget = '';
+
+// Difficulty scales dynamically up to Level 1000
+function getLevelDuration(lvl) {
+  return Math.max(380, 2000 - (lvl * 1.62));
+}
+
+function startTimer() {
+  clearInterval(timer);
+  timeLeft = 100;
+  const duration = getLevelDuration(currentLevel);
+  const stepTime = duration / 100;
+
+  timer = setInterval(() => {
+    timeLeft -= 1;
+    document.getElementById('timerBar').style.width = timeLeft + '%';
+    if (timeLeft <= 0) {
+      clearInterval(timer);
+      triggerFailure("OUT OF TIME!");
+    }
+  }, stepTime);
+}
+
+function loadRound() {
+  document.getElementById('levelLabel').innerText = `LVL ${currentLevel} / 1000`;
+  document.getElementById('scoreLabel').innerText = `STREAK: ${streak}`;
+
+  const isHardGrid = currentLevel > 150;
+  const activeColors = isHardGrid ? COLOR_PALETTE.slice(0, 6) : COLOR_PALETTE.slice(0, 4);
+
+  const textColorObj = activeColors[Math.floor(Math.random() * activeColors.length)];
+  const visualColorObj = activeColors[Math.floor(Math.random() * activeColors.length)];
+
+  const prompt = document.getElementById('promptText');
+  const rule = document.getElementById('ruleInstruction');
+  prompt.innerText = textColorObj.name;
+  prompt.style.color = visualColorObj.hex;
+
+  // Stroop Effect Switch: Alternates between matching text vs color
+  const matchVisual = currentLevel % 2 === 0;
+  if (matchVisual) {
+    rule.innerText = "TAP THE ACTUAL COLOR";
+    correctTarget = visualColorObj.name;
+  } else {
+    rule.innerText = "TAP THE WRITTEN WORD";
+    correctTarget = textColorObj.name;
+  }
+
+  const grid = document.getElementById('gridContainer');
+  grid.innerHTML = '';
+  grid.className = isHardGrid ? 'grid grid-3x3' : 'grid grid-2x2';
+
+  const shuffled = [...activeColors].sort(() => Math.random() - 0.5);
+  shuffled.forEach(item => {
+    const btn = document.createElement('button');
+    btn.className = 'btn';
+    btn.style.backgroundColor = item.hex;
+    btn.onclick = () => handleChoice(item.name);
+    grid.appendChild(btn);
+  });
+
+  startTimer();
+}
+
+function handleChoice(chosenName) {
+  if (chosenName === correctTarget) {
+    playSound('success');
+    if (navigator.vibrate) navigator.vibrate(35);
+    streak++;
+    if (currentLevel < 1000) currentLevel++;
+    localStorage.setItem('minddash_level', currentLevel);
+    loadRound();
+  } else {
+    triggerFailure("WRONG CHOICE!");
+  }
+}
+
+function triggerFailure(reason) {
+  clearInterval(timer);
+  playSound('fail');
+  if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+  alert(`${reason}\nRestarting Level ${currentLevel}`);
+  streak = 0;
+  loadRound();
+}
+
+// First touch initializes audio context automatically
+window.addEventListener('touchstart', () => {
+  if (!audioCtx) audioCtx = new AudioContext();
+}, { once: true });
+
+loadRound();
+</script>
+</body>
+</html>
